@@ -10,8 +10,9 @@ library(stringi)
 library(gt)
 library(gtExtras)
 
-shots <- read_csv("shots_2023.csv") 
+shots <- read_csv("shots_2023.csv") # downloading moneypuck data
 
+# disregarding empty net shots
 goalie_shots <- shots %>% filter(!is.na(goalieNameForShot)) %>% mutate(gsax = xGoal - goal, goalie = as.factor(goalieIdForShot), teamCode = as.factor(teamCode)) %>% select(gsax, goalie, shooting_team = teamCode)
 
 dummy <- dummyVars(" ~ .", data = goalie_shots)
@@ -26,6 +27,7 @@ cv_ridge <- cv.glmnet(preds, target, alpha = 0, intercept = TRUE)
 lambda <- cv_ridge$lambda.min # was not a good value so just decided to use total linear regression
 ridge_model <- glmnet(preds, target, alpha = 0, lambda = 0, intercept = TRUE)
 
+# determining adjusted GSAx per shot using coefficient and intercept
 ridge_coefs <- data.frame(as.matrix(coef(ridge_model)))
 ridge_coefs$name <- rownames(ridge_coefs)
 ridge_coefs <- ridge_coefs %>% rename(coef = s0)
@@ -44,6 +46,7 @@ goalies <- ridge_coefs %>%
   select(name = goalieNameForShot, adj_gsax_shot) %>%
   arrange(-adj_gsax_shot)
 
+# determining adjusted xG and introducing GOP (goalie overperformance)
 final_data <- shots %>%
   group_by(id = goalieIdForShot, name = goalieNameForShot) %>%
   filter(!is.na(goalieNameForShot)) %>%
@@ -53,6 +56,7 @@ final_data <- shots %>%
   mutate(adj_gsax = adj_gsax_shot * shots, adj_xg = adj_gsax + goals, gop = goals/xg, adj_gop = goals/adj_xg) %>%
   arrange(adj_gop)
 
+# gamma distribution based on filtered data
 final_data_filt <- final_data %>% filter(shots >= 1000)
 dist <- fitdistrplus::fitdist(final_data_filt$adj_gop, "gamma")
 
@@ -91,6 +95,7 @@ final_data$bayes_adj_op <- map2(
   }
 )
 
+# outputted mean and SD, mean is what the final GOPV will be
 final_data <- final_data %>%
   unnest_wider(
     bayes_adj_op, 
@@ -174,3 +179,5 @@ gt_func <- function(df, str) {
 
 gtsave(gt_func(t10, "Top"), "t10.png")
 gtsave(gt_func(b10, "Bottom"), "b10.png")
+
+gt_two_column_layout(list(gt_func(t10, "Top"), gt_func(b10, "Bottom")), "viewer")
